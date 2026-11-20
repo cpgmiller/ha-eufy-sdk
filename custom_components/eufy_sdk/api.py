@@ -482,6 +482,17 @@ class EufySdkApiClient:
         )
         return reply.get("result") or []
 
+    async def vacuum_map(self, sn: str) -> dict[str, Any] | None:
+        """
+        Read a robot vacuum's map summary: map id, geometry and room list.
+
+        The robot streams its map only when asked (the vendor app opening it), so the
+        bridge answers its latest decoded map, or the copy it saved, and None when it
+        has never seen one.
+        """
+        reply = await self.rpc("device.map", sn=sn)
+        return reply.get("map")
+
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""
         await self.rpc("device.set", sn=sn, name=name, value=value)

@@ -61,6 +61,7 @@ PLATFORMS: list[Platform] = [
     Platform.LOCK,
     Platform.ALARM_CONTROL_PANEL,
     Platform.SIREN,
+    Platform.VACUUM,
 ]
 
 
