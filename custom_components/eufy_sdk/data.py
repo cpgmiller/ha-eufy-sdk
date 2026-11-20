@@ -31,6 +31,9 @@ class EufySdkData:
     selected_preset: dict[str, int] = field(default_factory=dict)
     # Local snapshot policy per camera; absent means the bridge's configured behavior.
     snapshot_policy: dict[str, str] = field(default_factory=dict)
+    # Clockwise map rotation per robot vacuum, in degrees ({sn: 0|90|180|270}). The
+    # rotation select owns it and the map image reads it; absent means 0.
+    map_rotation: dict[str, int] = field(default_factory=dict)
     # Slots as each camera last reported them ({sn: [PresetSlot, …]}), read over P2P so
     # only present once the camera has been awake to answer. Empty means "not asked
     # yet", never "no presets" — see presets.py.

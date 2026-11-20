@@ -61,3 +61,7 @@ ATTR_SLOTS = "slots"
 # not a poll — it just stops a long live view from re-asking on every refresh. Long
 # enough to be free, short enough that a preset added in the eufy app turns up.
 SLOT_REREAD_SECS = 600
+
+# Dispatched (with the robot's serial formatted in) when a vacuum's map rotation
+# setting changes, so its map image redraws without waiting for the next refresh.
+SIGNAL_MAP_ROTATION = "eufy_sdk_map_rotation_{}"
