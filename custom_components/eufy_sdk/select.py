@@ -9,10 +9,11 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import presets
-from .const import ATTR_SLOTS, SLOT_REREAD_SECS
+from .const import ATTR_SLOTS, SIGNAL_MAP_ROTATION, SLOT_REREAD_SECS
 from .entity import (
     EufySdkDeviceEntity,
     EufySdkPropertyEntity,
@@ -89,6 +90,11 @@ async def async_setup_entry(
         EufySdkSnapshotPolicySelect(coordinator, sn)
         for sn, dev in coordinator.data.items()
         if dev.get("stream")
+    )
+    entities.extend(
+        EufySdkMapRotationSelect(coordinator, sn)
+        for sn, dev in coordinator.data.items()
+        if has_capability(dev, "vacuum_clean")
     )
     async_add_entities(entities)
 
@@ -336,3 +342,49 @@ def _slot_in(label: str | None) -> int | None:
         return None
     head = label.split(" ", 1)[0]
     return int(head) if head.isdigit() else None
+
+
+MAP_ROTATION_OPTIONS: tuple[str, ...] = ("0", "90", "180", "270")
+
+
+class EufySdkMapRotationSelect(EufySdkDeviceEntity, SelectEntity, RestoreEntity):
+    """
+    How far to turn a robot vacuum's map image clockwise, to match the vendor app.
+
+    A local display setting only: it is restored across restarts and never sent to
+    the robot. The map image reads it from runtime data and redraws on change.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:rotate-right"
+    _attr_options: ClassVar[list[str]] = list(MAP_ROTATION_OPTIONS)
+    _attr_translation_key = "map_rotation"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to one robot; start unrotated until a saved choice is restored."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"{sn}_map_rotation"
+        self._attr_current_option = MAP_ROTATION_OPTIONS[0]
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the saved rotation and hand it to the map image."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last and last.state in MAP_ROTATION_OPTIONS:
+            self._attr_current_option = last.state
+        self._publish()
+
+    async def async_select_option(self, option: str) -> None:
+        """Store the new rotation and ask the map image to redraw."""
+        if option not in MAP_ROTATION_OPTIONS:
+            msg = f"Unsupported map rotation: {option}"
+            raise HomeAssistantError(msg)
+        self._attr_current_option = option
+        self._publish()
+        self.async_write_ha_state()
+
+    def _publish(self) -> None:
+        """Share the rotation with the map image and nudge it to redraw."""
+        runtime = self.coordinator.config_entry.runtime_data
+        runtime.map_rotation[self._sn] = int(self._attr_current_option)
+        async_dispatcher_send(self.hass, SIGNAL_MAP_ROTATION.format(self._sn))

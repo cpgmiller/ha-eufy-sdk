@@ -135,6 +135,35 @@ class RenderTest(unittest.TestCase):
         snap = _snapshot(outline=None)
         self.assertIsNotNone(render_map_png(snap, scale=SCALE))
 
+    def test_rotation_turns_clockwise(self):
+        # Unrotated, world (col 0, row 0) is the wall at the bottom-left. Turned 90
+        # degrees clockwise the drawing is 2 wide x 4 tall and that corner is top-left.
+        png = render_map_png(self.snap, scale=SCALE, rotation=90)
+        image = Image.open(io.BytesIO(png)).convert("RGBA")
+        self.assertEqual(image.size, (2 * SCALE, 4 * SCALE))
+        self.assertEqual(image.getpixel((SCALE // 2, SCALE // 2)), WALL)
+        # The unknown cell (col 3, row 0) ends up bottom-left.
+        self.assertEqual(
+            image.getpixel((SCALE // 2, 3 * SCALE + SCALE // 2)), TRANSPARENT
+        )
+
+    def test_rotation_180_and_270(self):
+        for rotation, size in ((180, (4, 2)), (270, (2, 4))):
+            png = render_map_png(self.snap, scale=SCALE, rotation=rotation)
+            image = Image.open(io.BytesIO(png))
+            self.assertEqual(image.size, (size[0] * SCALE, size[1] * SCALE))
+
+    def test_odd_rotation_is_ignored(self):
+        png = render_map_png(self.snap, scale=SCALE, rotation=45)
+        self.assertEqual(Image.open(io.BytesIO(png)).size, (4 * SCALE, 2 * SCALE))
+
+    def test_markers_and_labels_draw_when_rotated(self):
+        snap = _snapshot(pose={"x": 10, "y": 5, "theta": 157})
+        for rotation in (0, 90, 180, 270):
+            self.assertTrue(
+                render_map_png(snap, scale=8, rotation=rotation).startswith(b"\x89PNG")
+            )
+
     def test_markers_and_labels_draw(self):
         snap = _snapshot(pose={"x": 10, "y": 5, "theta": 157})
         png = render_map_png(snap, scale=8)
@@ -148,6 +177,7 @@ def _coordinator(*, vacuum: bool = True) -> Mock:
     coord.config_entry.runtime_data.client.vacuum_map = AsyncMock(
         return_value=_snapshot()
     )
+    coord.config_entry.runtime_data.map_rotation = {}
     return coord
 
 
@@ -189,6 +219,18 @@ class MapImageEntityTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(entity.image_last_updated, first)
         client = coord.config_entry.runtime_data.client
         client.vacuum_map.assert_awaited_with(ROBOT, full=True)
+
+    async def test_refresh_uses_the_stored_rotation(self):
+        coord = _coordinator()
+        coord.config_entry.runtime_data.map_rotation[ROBOT] = 90
+        hass = _hass()
+        entity = EufySdkVacuumMapImage(hass, coord, ROBOT)
+        entity.hass = hass
+        with patch.object(entity, "async_write_ha_state"):
+            await entity.async_refresh_map()
+        image = Image.open(io.BytesIO(await entity.async_image()))
+        width, height = image.size
+        self.assertGreater(height, width)  # the 4x2 map now stands upright
 
     async def test_no_map_or_bridge_error_keeps_no_image(self):
         coord = _coordinator()

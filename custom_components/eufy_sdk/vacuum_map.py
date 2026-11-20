@@ -48,6 +48,14 @@ ROOM_COLOURS: tuple[tuple[int, int, int], ...] = (
 
 DEFAULT_SCALE = 3
 
+# Clockwise display rotations, in degrees; Pillow's transposes turn anticlockwise.
+ROTATIONS: tuple[int, ...] = (0, 90, 180, 270)
+_TRANSPOSE = {
+    90: Image.Transpose.ROTATE_270,
+    180: Image.Transpose.ROTATE_180,
+    270: Image.Transpose.ROTATE_90,
+}
+
 
 def _b64(value: Any) -> bytes | None:
     """Decode a base64 Buffer string from the bridge; None when absent or bad."""
@@ -84,8 +92,15 @@ def render_map_png(  # noqa: PLR0912, PLR0915 — one linear drawing pass
     scale: int = DEFAULT_SCALE,
     *,
     labels: bool = True,
+    rotation: int = 0,
 ) -> bytes | None:
-    """Draw the map as PNG bytes; None when the snapshot has no usable floor plane."""
+    """
+    Draw the map as PNG bytes; None when the snapshot has no usable floor plane.
+
+    `rotation` turns the drawing clockwise by 0/90/180/270 degrees so it can match how
+    the vendor app shows the home. Markers follow the rotation; labels stay upright.
+    """
+    rotation = rotation % 360 if rotation % 90 == 0 else 0
     plane = (snapshot or {}).get("plane") or {}
     geometry = plane.get("geometry") or {}
     width, height = geometry.get("width"), geometry.get("height")
@@ -154,13 +169,24 @@ def render_map_png(  # noqa: PLR0912, PLR0915 — one linear drawing pass
     image.putdata(pixels)
     image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
     image = image.resize((width * scale, height * scale), Image.Resampling.NEAREST)
+    if rotation:
+        image = image.transpose(_TRANSPOSE[rotation])
     draw = ImageDraw.Draw(image)
+    span_w, span_h = width * scale, height * scale
+
+    turns = {
+        0: lambda px, py: (px, py),
+        90: lambda px, py: (span_h - py, px),
+        180: lambda px, py: (span_w - px, span_h - py),
+        270: lambda px, py: (py, span_w - px),
+    }
+    turn = turns[rotation]  # maps a pixel of the unrotated drawing onto the turned one
 
     def to_px(x: float, y: float) -> tuple[float, float]:
-        """World cm → image pixel (centre of the cell), after the vertical flip."""
+        """World cm → image pixel (centre of the cell), after the flip and turn."""
         col = (x - ox) / resolution
         row = (y - oy) / resolution
-        return ((col + 0.5) * scale, (height - row - 0.5) * scale)
+        return turn((col + 0.5) * scale, (height - row - 0.5) * scale)
 
     for dock in geometry.get("docks") or []:
         pose = dock.get("pose") or {}
@@ -176,18 +202,15 @@ def render_map_png(  # noqa: PLR0912, PLR0915 — one linear drawing pass
         draw.ellipse((px - r, py - r, px + r, py + r), fill=ROBOT, outline=LABEL)
         theta = robot.get("theta")
         if isinstance(theta, (int, float)):
-            # Angles arrive as radians x 100; image y grows downward, so negate it.
+            # Angles arrive as radians x 100. The tip is a world point one robot
+            # length ahead, so it goes through the same flip and turn as the robot.
             angle = theta / 100
-            draw.line(
-                (
-                    px,
-                    py,
-                    px + math.cos(angle) * r * 1.6,
-                    py - math.sin(angle) * r * 1.6,
-                ),
-                fill=LABEL,
-                width=max(1, scale // 2),
+            reach = r * 1.6 / scale * resolution
+            tx, ty = to_px(
+                robot["x"] + math.cos(angle) * reach,
+                robot["y"] + math.sin(angle) * reach,
             )
+            draw.line((px, py, tx, ty), fill=LABEL, width=max(1, scale // 2))
 
     try:
         font = ImageFont.load_default(size=max(10, 5 * scale))
@@ -195,8 +218,7 @@ def render_map_png(  # noqa: PLR0912, PLR0915 — one linear drawing pass
         font = ImageFont.load_default()
     for rid, (sx, sy, n) in room_sums.items() if labels else ():
         label = names[rid]
-        cx = (sx / n + 0.5) * scale
-        cy = (height - sy / n - 0.5) * scale
+        cx, cy = turn((sx / n + 0.5) * scale, (height - sy / n - 0.5) * scale)
         draw.text(
             (cx, cy),
             label,

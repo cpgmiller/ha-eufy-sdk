@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import time
 from datetime import timedelta
+from functools import partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
@@ -13,11 +14,12 @@ import aiohttp
 from homeassistant.components.image import ImageEntity
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .api import EufySdkApiClientError
-from .const import CONF_HOST, CONF_PORT, EVENT_TYPE
+from .const import CONF_HOST, CONF_PORT, EVENT_TYPE, SIGNAL_MAP_ROTATION
 from .entity import EufySdkDeviceEntity, has_capability
 from .pushmap import EVENT_IMAGE_REFRESH, THUMBNAIL_EVENTS
 from .vacuum_map import render_map_png
@@ -95,7 +97,19 @@ class EufySdkVacuumMapImage(EufySdkDeviceEntity, ImageEntity):
                 self.hass, self._async_timed_refresh, MAP_REFRESH_INTERVAL
             )
         )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_MAP_ROTATION.format(self._sn),
+                self._handle_rotation_changed,
+            )
+        )
         await self.async_refresh_map()
+
+    @callback
+    def _handle_rotation_changed(self) -> None:
+        """Redraw straight away when the rotation setting changes."""
+        self.hass.async_create_task(self.async_refresh_map())
 
     async def _async_timed_refresh(self, _now: Any) -> None:
         await self.async_refresh_map()
@@ -116,7 +130,12 @@ class EufySdkVacuumMapImage(EufySdkDeviceEntity, ImageEntity):
                 snapshot = await self.client.vacuum_map(self._sn, full=True)
             except EufySdkApiClientError:
                 return
-            data = await self.hass.async_add_executor_job(render_map_png, snapshot)
+            rotation = self.coordinator.config_entry.runtime_data.map_rotation.get(
+                self._sn, 0
+            )
+            data = await self.hass.async_add_executor_job(
+                partial(render_map_png, snapshot, rotation=rotation)
+            )
             if data is None:
                 return
             digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
