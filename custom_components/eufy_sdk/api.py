@@ -482,15 +482,19 @@ class EufySdkApiClient:
         )
         return reply.get("result") or []
 
-    async def vacuum_map(self, sn: str) -> dict[str, Any] | None:
+    async def vacuum_map(self, sn: str, *, full: bool = False) -> dict[str, Any] | None:
         """
-        Read a robot vacuum's map summary: map id, geometry and room list.
+        Read a robot vacuum's map: by default a summary (map id, geometry, rooms).
 
-        The robot streams its map only when asked (the vendor app opening it), so the
+        With `full`, the whole decoded snapshot, its cell planes base64-encoded. The
+        robot streams its map only when asked (the vendor app opening it), so the
         bridge answers its latest decoded map, or the copy it saved, and None when it
         has never seen one.
         """
-        reply = await self.rpc("device.map", sn=sn)
+        args: dict[str, Any] = {"sn": sn}
+        if full:
+            args["full"] = True
+        reply = await self.rpc("device.map", **args)
         return reply.get("map")
 
     async def set_property(self, sn: str, name: str, value: Any) -> None:
