@@ -48,6 +48,9 @@
     "image": {
       "last_event": {
         "name": "Laatste gebeurtenis"
+      },
+      "map": {
+        "name": "Kaart"
       }
     },
     "select": {

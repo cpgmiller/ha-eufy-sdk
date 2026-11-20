@@ -48,6 +48,9 @@
     "image": {
       "last_event": {
         "name": "Ultimo evento"
+      },
+      "map": {
+        "name": "Mappa"
       }
     },
     "select": {
